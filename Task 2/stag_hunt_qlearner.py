@@ -6,7 +6,8 @@ from open_spiel.python.algorithms import tabular_qlearner, random_agent
 from open_spiel.python.egt import dynamics
 from open_spiel.python.egt import utils
 from absl import flags, app
-from open_spiel.python.egt.visualization import Dynamics2x2Axes
+import numpy as np
+from open_spiel.python.egt.visualization import Dynamics2x2Axes, Dynamics3x3Axes
 
 FLAGS = flags.FLAGS
 
@@ -20,8 +21,9 @@ stag_hunt_game = pyspiel.create_matrix_game("stag_hunt", "Stag Hunt Game",
 def stag_hunt_dynamics():
     payoff_tensor = utils.game_payoffs_array(stag_hunt_game)
     stag_hunt_dynamic = dynamics.MultiPopulationDynamics(payoff_tensor, dynamics.replicator)
-    fig = plt.Figure()
-    Dynamics2x2Axes(fig, [0, 0, 4, 4]).streamplot(stag_hunt_dynamic)  # TODO: not working, does not show figure
+    ax = plt.subplot(projection="2x2")
+    # ax.quiver(stag_hunt_dynamic)
+    ax.streamplot(stag_hunt_dynamic)
     plt.show()
 
 
