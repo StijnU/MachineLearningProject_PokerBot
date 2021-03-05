@@ -8,6 +8,7 @@ from absl import flags, app
 from open_spiel.python.egt.visualization import Dynamics2x2Axes
 from open_spiel.python.egt.utils import game_payoffs_array
 
+# Grafiek voor Replicator, Boltzmann Q en Lenient Boltzmann Q
 def plot_dynamics(game, temp, kappa):
     payoff_matrix = utils.game_payoffs_array(game)
     replicator = dynamics.MultiPopulationDynamics(payoff_matrix, dynamics.replicator)
@@ -25,7 +26,7 @@ def plot_dynamics(game, temp, kappa):
     plt.show()
     plt.savefig('plot_dynamics.png')
 
-
+# Lenient Boltzmann Q: grafiek voor verschillende temperatures
 def plot_temperatures(game, temperatures, kappa):
     payoff_matrix = utils.game_payoffs_array(game)
     n = len(temperatures)
@@ -38,7 +39,9 @@ def plot_temperatures(game, temperatures, kappa):
     plt.show()
     plt.savefig('plot_temperatures.png')
 
-
+# Lenient Boltzmann Q: grafiek voor verschillende temperatures
+# Als kappas = [1, 2, 5, 25], en temperature = 0.1, komen deze overeen met de grafieken in
+# http://www.flowermountains.nl/pub/Bloembergen2010lfaq.pdf, op de laatse pagina 
 def plot_kappas(game, temperature, kappas):
     payoff_matrix = utils.game_payoffs_array(game)
     n = len(kappas)
