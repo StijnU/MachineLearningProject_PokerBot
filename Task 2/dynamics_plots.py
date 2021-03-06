@@ -5,8 +5,9 @@ import numpy as np
 from open_spiel.python.egt import dynamics
 from open_spiel.python.egt import utils
 from absl import flags, app
-from open_spiel.python.egt.visualization import Dynamics2x2Axes
+from open_spiel.python.egt.visualization import Dynamics2x2Axes, Dynamics3x3Axes
 from open_spiel.python.egt.utils import game_payoffs_array
+
 
 # Grafiek voor Replicator, Boltzmann Q en Lenient Boltzmann Q
 def plot_dynamics(game, temp, kappa):
@@ -16,7 +17,11 @@ def plot_dynamics(game, temp, kappa):
     lenient = dynamics.MultiPopulationDynamics(
          payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temp, kappa)
     )
+    # lenient = dynamics.SinglePopulationDynamics(
+    #     payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temp, kappa)
+    # )
     _, (ax1, ax2, ax3) = plt.subplots(1, 3, subplot_kw=dict(projection="2x2"))
+    #_, (ax1, ax2, ax3) = plt.subplots(1, 3, subplot_kw=dict(projection="3x3"))
     ax1.quiver(replicator)
     ax1.set_title("replicator")
     ax2.quiver(boltzmannq)
@@ -26,15 +31,20 @@ def plot_dynamics(game, temp, kappa):
     plt.show()
     plt.savefig('plot_dynamics.png')
 
+
 # Lenient Boltzmann Q: grafiek voor verschillende temperatures
 def plot_temperatures(game, temperatures, kappa):
     payoff_matrix = utils.game_payoffs_array(game)
     n = len(temperatures)
     _, axs = plt.subplots(1, n, subplot_kw=dict(projection="2x2"))
+    #_, axs = plt.subplots(1, n, subplot_kw=dict(projection="3x3"))
     for (i, t) in enumerate(temperatures):
         lenient = dynamics.MultiPopulationDynamics(
             payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], t, kappa)
         )
+        # lenient = dynamics.SinglePopulationDynamics(
+        #     payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], t, kappa)
+        # )
         axs[i].quiver(lenient)
     plt.show()
     plt.savefig('plot_temperatures.png')
@@ -46,22 +56,26 @@ def plot_kappas(game, temperature, kappas):
     payoff_matrix = utils.game_payoffs_array(game)
     n = len(kappas)
     _, axs = plt.subplots(1, n, subplot_kw=dict(projection="2x2"))
+    #_, axs = plt.subplots(1, n, subplot_kw=dict(projection="3x3"))
     for (i, k) in enumerate(kappas):
         lenient = dynamics.MultiPopulationDynamics(
             payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
         )
+        # lenient = dynamics.SinglePopulationDynamics(
+        #     payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
+        # )
         axs[i].quiver(lenient)
     plt.show()
     plt.savefig('plot_kappas.png')
 
 def main(_):
     # game = pyspiel.load_game("matrix_pd")
-    game = pyspiel.create_matrix_game("stag_hunt", "Stag Hunt Game",
-                                            ["Stag", "Hare"], ["Stag", "Hare"],
-                                            [[4, 1],
-                                             [3, 3]], 
-                                            [[4, 3], 
-                                             [1, 3]])
+    game = pyspiel.create_matrix_game("matching_pennies", "Matching Pennies",
+                                                  ["Heads", "Tails"], ["Heads", "Tails"],
+                                                  [[1, -1], [-1, 1]], [[-1, 1], [1, -1]])
+    # game = pyspiel.create_matrix_game("rps", "Rock Paper Scissors",
+    #                                  ["Rock", "Paper", "Scissors"], ["Rock", "Paper", "Scissors"],
+    #                                  [[0, -1, 1], [1, 0, -1], [-1, 1, 0]], [[0, 1, -1], [-1, 0, 1], [1, -1, 0]])
     kappa = 5
     kappas = [1, 2, 5, 25]
     temp = 0.1
@@ -72,7 +86,7 @@ def main(_):
     
 
 def lenientboltzmannq(state, fitness, A, temp, kappa):
-    y = np.linalg.inv(A) @ fitness
+    y = np.linalg.pinv(A) @ fitness
     n = len(A)
     u = np.zeros(n)
     for i in range(n):
