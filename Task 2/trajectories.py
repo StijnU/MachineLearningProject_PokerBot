@@ -2,8 +2,6 @@ import logging
 import pyspiel
 import matplotlib.pyplot as plt
 import numpy as np
-import dynamics_plots
-import qlearner
 import random
 from open_spiel.python import rl_environment, rl_tools
 from open_spiel.python.algorithms import random_agent, tabular_qlearner, masked_softmax
@@ -19,12 +17,17 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("num_episodes", int(5e4), "Number of train episodes.")
 
-def plot_trajectory(game, traj, temp, kappa):
-    (_, ax2, _) = dynamics_plots.plot_dynamics(game, temp, kappa)
+def plot_trajectory(game, traj, temp):
+    payoff_matrix = utils.game_payoffs_array(game)
+    boltzmannq = dynamics.MultiPopulationDynamics(payoff_matrix, lambda state, fitness: dynamics.boltzmannq(state, fitness, temp))
+    _, ax = plt.subplots(1, 1, subplot_kw=dict(projection="2x2"))
+    ax.set_title("Boltzmann Q Learning Dynamic and Trajectory")
+    plt.show()
+    ax.quiver(boltzmannq)
     traj = time_average(traj)
     print(traj)
-    ax2.plot(traj[:, 0], traj[:, 1])
-    plt.savefig('traj.png')  
+    ax.plot(traj[:, 0], traj[:, 1])
+    plt.savefig('traj.png')
 
 def main(_):
     game = pyspiel.load_game("matrix_mp")
@@ -35,7 +38,6 @@ def main(_):
 
     discount_factor = 1
     temp = 1
-    kappa = 5
 
     env = rl_environment.Environment(game)
     num_actions = env.action_spec()["num_actions"]
@@ -90,7 +92,7 @@ def main(_):
         for j in range(2):
             q_agents[j].step(time_step)
 
-    plot_trajectory(game, traj, temp, kappa)
+    plot_trajectory(game, traj, temp)
 
 
 if __name__ == "__main__":
