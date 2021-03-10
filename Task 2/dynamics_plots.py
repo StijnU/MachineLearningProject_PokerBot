@@ -30,17 +30,18 @@ def plot_dynamics(game, temp, kappa):
     ax2.set_title("boltzmannq")
     ax3.quiver(lenient)
     ax3.set_title("lenient")
-    plt.show()
+    plt.tight_layout()
     plt.savefig('plot_dynamics.png')
-    return (ax1, ax2, ax3)
+    plt.show()
+    return ax1, ax2, ax3
 
 
 # Lenient Boltzmann Q: grafiek voor verschillende temperatures
 def plot_temperatures(game, temperatures, kappa):
     payoff_matrix = utils.game_payoffs_array(game)
     n = len(temperatures)
-    # _, axs = plt.subplots(1, n, subplot_kw=dict(projection="2x2"))
-    _, axs = plt.subplots(1, n, subplot_kw=dict(projection="3x3"))
+    _, axs = plt.subplots(1, n, subplot_kw=dict(projection="2x2"))
+    # _, axs = plt.subplots(1, n, subplot_kw=dict(projection="3x3"))
     for (i, t) in enumerate(temperatures):
         lenient = dynamics.MultiPopulationDynamics(
             payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], t, kappa)
@@ -49,8 +50,9 @@ def plot_temperatures(game, temperatures, kappa):
         #     payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], t, kappa)
         # )
         axs[i].quiver(lenient)
-    plt.show()
+    plt.tight_layout()
     plt.savefig('plot_temperatures.png')
+    plt.show()
 
 # Lenient Boltzmann Q: grafiek voor verschillende temperatures
 # Als kappas = [1, 2, 5, 25], en temperature = 0.1, komen deze overeen met de grafieken in
@@ -61,15 +63,17 @@ def plot_kappas(game, temperature, kappas):
     _, axs = plt.subplots(1, n, subplot_kw=dict(projection="2x2"))
     # _, axs = plt.subplots(1, n, subplot_kw=dict(projection="3x3"))
     for (i, k) in enumerate(kappas):
-        # lenient = dynamics.MultiPopulationDynamics(
-        #    payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
-        # )
-        lenient = dynamics.SinglePopulationDynamics(
-            payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
+        lenient = dynamics.MultiPopulationDynamics(
+           payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
         )
+        # lenient = dynamics.SinglePopulationDynamics(
+        #     payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
+        # )
         axs[i].quiver(lenient)
-    plt.show()
+    plt.tight_layout()
     plt.savefig('plot_kappas.png')
+    plt.show()
+
 
 def main(_):
     game = pyspiel.load_game("matrix_mp")
