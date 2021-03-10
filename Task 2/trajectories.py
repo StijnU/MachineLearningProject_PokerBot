@@ -17,17 +17,19 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("num_episodes", int(5e4), "Number of train episodes.")
 
+
 def plot_trajectory(game, traj, temp):
     payoff_matrix = utils.game_payoffs_array(game)
     boltzmannq = dynamics.MultiPopulationDynamics(payoff_matrix, lambda state, fitness: dynamics.boltzmannq(state, fitness, temp))
     _, ax = plt.subplots(1, 1, subplot_kw=dict(projection="2x2"))
     ax.set_title("Boltzmann Q Learning Dynamic and Trajectory")
-    plt.show()
     ax.quiver(boltzmannq)
     traj = time_average(traj)
     print(traj)
-    ax.plot(traj[:, 0], traj[:, 1])
+    plt.plot(traj[:, 0], traj[:, 1])
     plt.savefig('traj.png')
+    plt.show()
+
 
 def main(_):
     game = pyspiel.load_game("matrix_mp")
