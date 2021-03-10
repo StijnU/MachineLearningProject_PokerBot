@@ -24,8 +24,7 @@ def plot_trajectory(game, traj, temp, kappa):
     traj = time_average(traj)
     print(traj)
     ax2.plot(traj[:, 0], traj[:, 1])
-    plt.savefig('traj.png')
-    
+    plt.savefig('traj.png')  
 
 def main(_):
     game = pyspiel.load_game("matrix_mp")
