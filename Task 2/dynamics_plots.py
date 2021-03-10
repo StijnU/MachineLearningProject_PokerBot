@@ -30,8 +30,9 @@ def plot_dynamics(game, temp, kappa):
     ax2.set_title("boltzmannq")
     ax3.quiver(lenient)
     ax3.set_title("lenient")
-    plt.show()
     plt.savefig('plot_dynamics.png')
+    plt.show()
+
 
 
 # Lenient Boltzmann Q: grafiek voor verschillende temperatures
@@ -48,8 +49,9 @@ def plot_temperatures(game, temperatures, kappa):
             payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], t, kappa)
         )
         axs[i].quiver(lenient)
-    plt.show()
     plt.savefig('plot_temperatures.png')
+    plt.show()
+
 
 # Lenient Boltzmann Q: grafiek voor verschillende temperatures
 # Als kappas = [1, 2, 5, 25], en temperature = 0.1, komen deze overeen met de grafieken in
@@ -67,8 +69,9 @@ def plot_kappas(game, temperature, kappas):
             payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], temperature, k)
         )
         axs[i].quiver(lenient)
-    plt.show()
     plt.savefig('plot_kappas.png')
+    plt.show()
+
 
 def main(_):
     # game = pyspiel.load_game("matrix_pd")
