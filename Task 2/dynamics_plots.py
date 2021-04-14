@@ -93,7 +93,7 @@ def main(_):
     plot_dynamics(game, temp, kappa)
     plot_temperatures(game, temperatures, kappa)
     plot_kappas(game, temp, kappas)
-    
+    # trajectories()
 
 def lenientboltzmannq(state, fitness, A, temp, kappa):
     y = np.linalg.pinv(A) @ fitness
@@ -107,6 +107,32 @@ def lenientboltzmannq(state, fitness, A, temp, kappa):
             u[i] += A[i, j] * y[j] * (sum(y[A[i, :] <= A[i, j]])**kappa - sum(y[A[i, :] < A[i, j]])**kappa) / sum(y[A[i, :] == A[i, j]])
     return dynamics.boltzmannq(state, u, temp)
 
+
+# def trajectories():
+#     game = pyspiel.load_game("matrix_mp")
+#     payoff_matrix = utils.game_payoffs_array(game)
+#     dyn = dynamics.MultiPopulationDynamics(
+#         payoff_matrix, lambda state, fitness: lenientboltzmannq(state, fitness, payoff_matrix[0], 0.1, 6)
+#     )
+#     start_list = np.array([[0.9,0.1,0.1,0.9],[0.75, 0.25, 0.25, 0.75], [0.6,0.4,0.4,0.6],[0.4,0.6,0.6,0.4],[0.25, 0.75, 0.75, 0.25],[0.1,0.9,0.9,0.1]])
+#
+#     for start in start_list:
+#         x = [start[0]]
+#         y = [start[2]]
+#         end = False
+#         while not end:
+#             temp = start + 0.03 * dyn(start)
+#             if np.allclose(temp, start):
+#                 end = True
+#             start = temp
+#             for i in range(len(start)):
+#                 start[i] = min(1, max(0, start[i]))
+#                 if start[i] == 0 or start[i] == 0:
+#                     end = True
+#             x.append(start[0])
+#             y.append(start[2])
+#         plt.plot(x, y, 'k')
+#     plt.show()
 
 
 if __name__ == "__main__":

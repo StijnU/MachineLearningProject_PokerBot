@@ -7,7 +7,7 @@ from open_spiel.python.egt import dynamics
 from open_spiel.python.egt import utils
 from absl import flags, app
 from open_spiel.python.egt.visualization import Dynamics2x2Axes
-
+import numpy as np
 
 FLAGS = flags.FLAGS
 
@@ -18,12 +18,32 @@ matching_pennies = pyspiel.create_matrix_game("matching_pennies", "Matching Penn
                                             [[1, -1], [-1, 1]], [[-1, 1], [1, -1]])
 
 
+def lenient_boltzmann_q(state, fitness, A, temp, kappa):
+    y = np.linalg.pinv(A) @ fitness
+    if np.linalg.det(A) == 0:
+        y += np.full(y.shape, 1/len(y))
+    n = len(A)
+    u = np.zeros(n)
+    for i in range(n):
+        for j in range(n):
+            u[i] += A[i, j] * y[j] * (sum(y[A[i, :] <= A[i, j]])**kappa - sum(y[A[i, :] < A[i, j]])**kappa) / sum(y[A[i, :] == A[i, j]])
+    return dynamics.boltzmannq(state, u, temp)
+
+
 def matching_pennies_dynamics():
-    payoff_tensor = utils.game_payoffs_array(matching_pennies)
-    matching_pennies_dynamic = dynamics.MultiPopulationDynamics(payoff_tensor, dynamics.replicator)
-    ax = plt.subplot(projection="2x2")
-    ax.quiver(matching_pennies_dynamic)
-    ax.streamplot(matching_pennies_dynamic)
+    payoff_matrix = utils.game_payoffs_array(matching_pennies)
+    replicator_dynamics = dynamics.MultiPopulationDynamics(payoff_matrix, dynamics.replicator)
+    lenient_dynamics = dynamics.MultiPopulationDynamics(payoff_matrix, lambda state, fitness: lenient_boltzmann_q(state, fitness, payoff_matrix[0], 0.1, 25))
+    _, (ax1, ax2) = plt.subplots(1, 2, subplot_kw=dict(projection="2x2"))
+    ax1.streamplot(replicator_dynamics, density=0.6)
+    ax1.set_title("Replicator dynamics", fontsize=12)
+    ax1.set_xlabel("player 1, probability of choosing heads", fontsize=8.5)
+    ax1.set_ylabel("player 2, probability of choosing heads", fontsize=8.5)
+    ax2.streamplot(lenient_dynamics, density=0.6)
+    ax2.set_title("Lenient boltzmann Q-learning dynamics", fontsize=9)
+    ax2.set_xlabel("player 1, probability of choosing heads", fontsize=8.5)
+    ax2.set_ylabel("player 2, probability of choosing heads", fontsize=8.5)
+    plt.tight_layout()
     plt.show()
 
 
