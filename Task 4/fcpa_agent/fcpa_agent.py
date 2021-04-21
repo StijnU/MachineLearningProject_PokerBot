@@ -14,7 +14,8 @@ import argparse
 import logging
 import numpy as np
 import pyspiel
-from open_spiel.python.algorithms import evaluate_bots, rcfr
+from open_spiel.python import rl_environment, policy
+from open_spiel.python.algorithms import evaluate_bots, rcfr, dqn
 import tensorflow.compat.v1 as tf
 
 logger = logging.getLogger('be.kuleuven.cs.dtai.fcpa')
@@ -32,6 +33,47 @@ def get_agent_for_tournament(player_id):
     return my_player
 
 
+def train():
+    """Trains the model and save the trained policy"""
+    fcpa_game_string = pyspiel.hunl_game_string("fcpa")
+    game = pyspiel.load_game(fcpa_game_string)
+    num_players = 2
+    env_configs = {"players": num_players}
+    env = rl_environment.Environment(game, **env_configs)
+    info_state_size = env.observation_spec()["info_state"][0]
+    num_actions = env.action_spec()["num_actions"]
+
+    hidden_layers_sizes = [int(l) for l in [128, ]]
+    kwargs = {
+        "replay_buffer_capacity": int(2e2),
+        "epsilon_decay_duration": int(3e3),
+        "epsilon_start": 0.06,
+        "epsilon_end": 0.001,
+    }
+
+    with tf.Session() as sess:
+        agents = [
+            dqn.DQN(sess, idx, info_state_size, num_actions, hidden_layers_sizes, **kwargs) for idx in
+            range(num_players)
+        ]
+        expl_policies_avg = DQNPolicies(env, agents)
+
+        sess.run(tf.global_variables_initializer())
+        for ep in range(int(3e3)):
+            time_step = env.reset()
+            while not time_step.last():
+                player_id = time_step.observations["current_player"]
+                agent_output = agents[player_id].step(time_step)
+                action_list = [agent_output.action]
+                time_step = env.step(action_list)
+
+            # Episode is over, step all agents with final info state.
+            for agent in agents:
+                agent.step(time_step)
+        for agent in agents:
+            agent.save("./checkpoints")
+
+
 class Agent(pyspiel.Bot):
     """Agent template"""
 
@@ -42,16 +84,27 @@ class Agent(pyspiel.Bot):
         the tournament. Initializing the agent should thus take no more than
         a few seconds.
         """
-        self.policy = None
+        pyspiel.Bot.__init__(self)
+
         fcpa_game_string = pyspiel.hunl_game_string("fcpa")
         game = pyspiel.load_game(fcpa_game_string)
-        self.model = rcfr.DeepRcfrModel(
-            game,
-            num_hidden_layers=1,
-            num_hidden_units=13,
-            num_hidden_factors=8,
-            use_skip_connections=True)
-        pyspiel.Bot.__init__(self)
+        num_players = 2
+        env_configs = {"players": num_players}
+        self.env = rl_environment.Environment(game, **env_configs)
+        info_state_size = self.env.observation_spec()["info_state"][0]
+        num_actions = self.env.action_spec()["num_actions"]
+
+        hidden_layers_sizes = [int(l) for l in [128, ]]
+        kwargs = {
+            "replay_buffer_capacity": int(2e2),
+            "epsilon_decay_duration": int(3e3),
+            "epsilon_start": 0.06,
+            "epsilon_end": 0.001,
+        }
+        with tf.Session() as sess:
+            # pylint: disable=g-complex-comprehension
+            self.agent = dqn.DQN(sess, player_id, info_state_size, num_actions, hidden_layers_sizes, **kwargs)
+
         self.player_id = player_id
         self.state = None
         self.previousAction = [None, None]
@@ -61,7 +114,7 @@ class Agent(pyspiel.Bot):
 
         :param state: The initial state of the game.
         """
-        self.state = state
+        self.env.set_state(state)
 
     def inform_action(self, state, player_id, action):
         """Let the bot know of the other agent's actions.
@@ -70,7 +123,7 @@ class Agent(pyspiel.Bot):
         :param player_id: The ID of the player that executed an action.
         :param action: The action which the player executed.
         """
-        self.state = state
+        self.env.set_state(state)
         self.previousAction[player_id] = action
 
     def step(self, state):
@@ -80,63 +133,17 @@ class Agent(pyspiel.Bot):
         :returns: The selected action from the legal actions, or
             `pyspiel.INVALID_ACTION` if there are no legal actions available.
         """
-        if len(state.legal_actions()) == 0:
-            return pyspiel.INVALID_ACTION
-        features = rcfr.sequence_features(state, num_distinct_actions=state.num_distinct_actions())
-        action = self.model(features)
-        self.previousAction[self.player_id] = action
+        with tf.Session() as sess:
+            self.agent._session = sess
+            if len(state.legal_actions()) == 0:
+                return pyspiel.INVALID_ACTION
+            action = self.agent.step(time_step=self.env.get_time_step(), is_evaluation=True)
+            self.previousAction[self.player_id] = action
         return action
 
-    def train(self):
-        """Trains the model and save the trained policy"""
-        buffer_size = -1
-        fcpa_game_string = pyspiel.hunl_game_string("fcpa")
-        game = pyspiel.load_game(fcpa_game_string)
-        models = [self.model, rcfr.DeepRcfrModel(
-            game,
-            num_hidden_layers=1,
-            num_hidden_units=13,
-            num_hidden_factors=8,
-            use_skip_connections=True)]
-        if buffer_size > 0:
-            solver = rcfr.ReservoirRcfrSolver(
-                game,
-                models,
-                buffer_size,
-                truncate_negative=False)
-        else:
-            solver = rcfr.RcfrSolver(
-                game,
-                models,
-                truncate_negative=False,
-                bootstrap=False)
-
-        def _train_fn(model, data):
-            """Train `model` on `data`."""
-            data = data.shuffle(100 * 10)
-            data = data.batch(100)
-            data = data.repeat(200)
-
-            optimizer = tf.keras.optimizers.Adam(lr=0.01, amsgrad=True)
-
-            @tf.function
-            def _train():
-                for x, y in data:
-                    optimizer.minimize(
-                        lambda: tf.losses.huber_loss(y, model(x), delta=0.01),  # pylint: disable=cell-var-from-loop
-                        model.trainable_variables)
-
-            _train()
-
-        # End of _train_fn
-
-        for i in range(100):
-            solver.evaluate_and_update_policy(_train_fn)
-            if i % 10 == 0:
-                conv = pyspiel.exploitability(game, solver.average_policy())
-                print("Iteration {} exploitability {}".format(i, conv))
-        self.policy = solver.current_policy()
-        print(self.policy)
+    def reload_policy(self):
+        if self.agent.has_checkpoint("./checkpoints"):
+            self.agent.restore("./checkpoints")
 
 
 def test_api_calls():
@@ -147,13 +154,40 @@ def test_api_calls():
     fcpa_game_string = pyspiel.hunl_game_string("fcpa")
     game = pyspiel.load_game(fcpa_game_string)
     bots = [get_agent_for_tournament(player_id) for player_id in [0, 1]]
+    train()
     for bot in bots:
-        bot.train()
+        bot.reload_policy()
     returns = evaluate_bots.evaluate_bots(game.new_initial_state(), bots, np.random)
     assert len(returns) == 2
     assert isinstance(returns[0], float)
     assert isinstance(returns[1], float)
     print("SUCCESS!")
+
+
+class DQNPolicies(policy.Policy):
+    """Joint policy to be evaluated."""
+
+    def __init__(self, env, dqn_policies):
+        game = env.game
+        player_ids = [0, 1]
+        super(DQNPolicies, self).__init__(game, player_ids)
+        self._policies = dqn_policies
+        self._obs = {"info_state": [None, None], "legal_actions": [None, None]}
+
+    def action_probabilities(self, state, player_id=None):
+        cur_player = state.current_player()
+        legal_actions = state.legal_actions(cur_player)
+
+        self._obs["current_player"] = cur_player
+        self._obs["info_state"][cur_player] = (
+            state.information_state_tensor(cur_player))
+        self._obs["legal_actions"][cur_player] = legal_actions
+
+        info_state = rl_environment.TimeStep(
+            observations=self._obs, rewards=None, discounts=None, step_type=None)
+        p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
+        prob_dict = {action: p[action] for action in legal_actions}
+        return prob_dict
 
 
 def main(argv=None):
