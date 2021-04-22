@@ -45,8 +45,8 @@ def train():
 
     hidden_layers_sizes = [int(l) for l in [128, ]]
     kwargs = {
-        "replay_buffer_capacity": int(2e2),
-        "epsilon_decay_duration": int(3e3),
+        "replay_buffer_capacity": int(5e3),
+        "epsilon_decay_duration": int(3e4),
         "epsilon_start": 0.06,
         "epsilon_end": 0.001,
     }
@@ -56,10 +56,10 @@ def train():
             dqn.DQN(sess, idx, info_state_size, num_actions, hidden_layers_sizes, **kwargs) for idx in
             range(num_players)
         ]
-        expl_policies_avg = DQNPolicies(env, agents)
+        policy = DQNPolicies(env, agents)
 
         sess.run(tf.global_variables_initializer())
-        for ep in range(int(3e3)):
+        for ep in range(int(3e4)):
             time_step = env.reset()
             while not time_step.last():
                 player_id = time_step.observations["current_player"]
@@ -70,8 +70,7 @@ def train():
             # Episode is over, step all agents with final info state.
             for agent in agents:
                 agent.step(time_step)
-        for agent in agents:
-            agent.save("./checkpoints")
+        return policy
 
 
 class Agent(pyspiel.Bot):
@@ -105,6 +104,7 @@ class Agent(pyspiel.Bot):
             # pylint: disable=g-complex-comprehension
             self.agent = dqn.DQN(sess, player_id, info_state_size, num_actions, hidden_layers_sizes, **kwargs)
 
+        self.policy = None
         self.player_id = player_id
         self.state = None
         self.previousAction = [None, None]
@@ -133,17 +133,11 @@ class Agent(pyspiel.Bot):
         :returns: The selected action from the legal actions, or
             `pyspiel.INVALID_ACTION` if there are no legal actions available.
         """
-        with tf.Session() as sess:
-            self.agent._session = sess
-            if len(state.legal_actions()) == 0:
-                return pyspiel.INVALID_ACTION
-            action = self.agent.step(time_step=self.env.get_time_step(), is_evaluation=True)
-            self.previousAction[self.player_id] = action
+        action_prob = self.policy.action_probabilities(state, self.player_id)
+        actions = list(action_prob.keys())
+        probs = list(action_prob.values())
+        action = np.random.choice(actions, p=probs)
         return action
-
-    def reload_policy(self):
-        if self.agent.has_checkpoint("./checkpoints"):
-            self.agent.restore("./checkpoints")
 
 
 def test_api_calls():
@@ -154,9 +148,9 @@ def test_api_calls():
     fcpa_game_string = pyspiel.hunl_game_string("fcpa")
     game = pyspiel.load_game(fcpa_game_string)
     bots = [get_agent_for_tournament(player_id) for player_id in [0, 1]]
-    train()
+    policy = train()
     for bot in bots:
-        bot.reload_policy()
+        bot.policy = policy
     returns = evaluate_bots.evaluate_bots(game.new_initial_state(), bots, np.random)
     assert len(returns) == 2
     assert isinstance(returns[0], float)
@@ -185,9 +179,12 @@ class DQNPolicies(policy.Policy):
 
         info_state = rl_environment.TimeStep(
             observations=self._obs, rewards=None, discounts=None, step_type=None)
-        p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
-        prob_dict = {action: p[action] for action in legal_actions}
-        return prob_dict
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            self._policies[cur_player]._session = sess
+            p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
+            prob_dict = {action: p[action] for action in legal_actions}
+            return prob_dict
 
 
 def main(argv=None):
