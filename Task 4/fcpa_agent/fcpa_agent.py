@@ -8,6 +8,9 @@ Extend this class to provide an agent that can participate in a tournament.
 Created by Pieter Robberechts, Wannes Meert.
 Copyright (c) 2021 KU Leuven. All rights reserved.
 """
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import sys
 import argparse
@@ -17,6 +20,9 @@ import pyspiel
 from open_spiel.python import rl_environment, policy
 from open_spiel.python.algorithms import evaluate_bots, rcfr, dqn
 import tensorflow.compat.v1 as tf
+from absl import app
+from absl import flags
+from open_spiel.python.bots import uniform_random
 
 logger = logging.getLogger('be.kuleuven.cs.dtai.fcpa')
 
@@ -45,7 +51,7 @@ def train():
 
     hidden_layers_sizes = [int(l) for l in [128, ]]
     kwargs = {
-        "replay_buffer_capacity": int(5e3),
+        "replay_buffer_capacity": int(5e2),
         "epsilon_decay_duration": int(3e4),
         "epsilon_start": 0.06,
         "epsilon_end": 0.001,
@@ -187,9 +193,101 @@ class DQNPolicies(policy.Policy):
             return prob_dict
 
 
-def main(argv=None):
-    test_api_calls()
 
+
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_integer("seed", 12761381, "The seed to use for the RNG.")
+
+# Supported types of players: "random", "agent", "check_call", "fold"
+flags.DEFINE_string("player0", "agent", "Type of the agent for player 0.")
+flags.DEFINE_string("player1", "check_call", "Type of the agent for player 1.")
+
+
+def LoadAgent(agent_type, game, player_id, rng):
+  """Return a bot based on the agent type."""
+  if agent_type == "random":
+    return uniform_random.UniformRandomBot(player_id, rng)
+  elif agent_type == "agent":
+    agent = get_agent_for_tournament(player_id)
+    agent.policy = train()
+    return agent
+  elif agent_type == "check_call":
+    policy = pyspiel.PreferredActionPolicy([1, 0])
+    return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
+  elif agent_type == "fold":
+    policy = pyspiel.PreferredActionPolicy([0, 1])
+    return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
+  else:
+    raise RuntimeError("Unrecognized agent type: {}".format(agent_type))
+
+
+def test_against_bots(_):
+  rng = np.random.RandomState(FLAGS.seed)
+
+  # Make sure poker is compiled into the library, as it requires an optional
+  # dependency: the ACPC poker code. To ensure it is compiled in, prepend both
+  # the install.sh and build commands with BUILD_WITH_ACPC=ON. See here:
+  # https://github.com/deepmind/open_spiel/blob/master/docs/install.md#configuration-conditional-dependencies
+  # for more details on optional dependencies.
+  games_list = pyspiel.registered_names()
+  assert "universal_poker" in games_list
+
+  fcpa_game_string = pyspiel.hunl_game_string("fcpa")
+  print("Creating game: {}".format(fcpa_game_string))
+  game = pyspiel.load_game(fcpa_game_string)
+
+  agents = [
+      LoadAgent(FLAGS.player0, game, 0, rng),
+      LoadAgent(FLAGS.player1, game, 1, rng)
+  ]
+
+  state = game.new_initial_state()
+
+  # Print the initial state
+  print("INITIAL STATE")
+  print(str(state))
+
+  while not state.is_terminal():
+    # The state can be three different types: chance node,
+    # simultaneous node, or decision node
+    current_player = state.current_player()
+    if state.is_chance_node():
+      # Chance node: sample an outcome
+      outcomes = state.chance_outcomes()
+      num_actions = len(outcomes)
+      print("Chance node with " + str(num_actions) + " outcomes")
+      action_list, prob_list = zip(*outcomes)
+      action = rng.choice(action_list, p=prob_list)
+      print("Sampled outcome: ",
+            state.action_to_string(state.current_player(), action))
+      state.apply_action(action)
+    else:
+      # Decision node: sample action for the single current player
+      legal_actions = state.legal_actions()
+      for action in legal_actions:
+        print("Legal action: {} ({})".format(
+            state.action_to_string(current_player, action), action))
+      action = agents[current_player].step(state)
+      action_string = state.action_to_string(current_player, action)
+      print("Player ", current_player, ", chose action: ",
+            action_string)
+      state.apply_action(action)
+
+    print("")
+    print("NEXT STATE:")
+    print(str(state))
+
+  # Game is now done. Print utilities for each player
+  returns = state.returns()
+  for pid in range(game.num_players()):
+    print("Utility for player {} is {}".format(pid, returns[pid]))
+
+
+def main(argv=None):
+    # test_api_calls()
+    app.run(test_against_bots)
 
 if __name__ == "__main__":
     sys.exit(main())
