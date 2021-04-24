@@ -18,7 +18,7 @@ import logging
 import numpy as np
 import pyspiel
 from open_spiel.python import rl_environment, policy
-from open_spiel.python.algorithms import evaluate_bots, rcfr, dqn
+from open_spiel.python.algorithms import evaluate_bots, nfsp
 import tensorflow.compat.v1 as tf
 from absl import app
 from absl import flags
@@ -51,21 +51,22 @@ def train():
 
     hidden_layers_sizes = [int(l) for l in [128, ]]
     kwargs = {
-        "replay_buffer_capacity": int(5e2),
-        "epsilon_decay_duration": int(3e4),
+        "replay_buffer_capacity": int(5e3),
+        "epsilon_decay_duration": int(3e2),
         "epsilon_start": 0.06,
         "epsilon_end": 0.001,
     }
 
     with tf.Session() as sess:
         agents = [
-            dqn.DQN(sess, idx, info_state_size, num_actions, hidden_layers_sizes, **kwargs) for idx in
-            range(num_players)
+            nfsp.NFSP(sess, idx, info_state_size, num_actions, hidden_layers_sizes,
+                      reservoir_buffer_capacity=int(5e3), anticipatory_param=0.1,
+                      **kwargs) for idx in range(num_players)
         ]
-        policy = DQNPolicies(env, agents)
-
+        learned_policy = NFSPPolicies(env, agents, nfsp.MODE.average_policy)
         sess.run(tf.global_variables_initializer())
-        for ep in range(int(3e4)):
+
+        for ep in range(int(3e2)):
             time_step = env.reset()
             while not time_step.last():
                 player_id = time_step.observations["current_player"]
@@ -76,7 +77,9 @@ def train():
             # Episode is over, step all agents with final info state.
             for agent in agents:
                 agent.step(time_step)
-        return policy
+        # for agent in agents:
+        #     agent.save("/tmp/fcpa_checkpoints")
+    return learned_policy
 
 
 class Agent(pyspiel.Bot):
@@ -91,25 +94,36 @@ class Agent(pyspiel.Bot):
         """
         pyspiel.Bot.__init__(self)
 
-        fcpa_game_string = pyspiel.hunl_game_string("fcpa")
-        game = pyspiel.load_game(fcpa_game_string)
-        num_players = 2
-        env_configs = {"players": num_players}
-        self.env = rl_environment.Environment(game, **env_configs)
-        info_state_size = self.env.observation_spec()["info_state"][0]
-        num_actions = self.env.action_spec()["num_actions"]
-
-        hidden_layers_sizes = [int(l) for l in [128, ]]
-        kwargs = {
-            "replay_buffer_capacity": int(2e2),
-            "epsilon_decay_duration": int(3e3),
-            "epsilon_start": 0.06,
-            "epsilon_end": 0.001,
-        }
-        with tf.Session() as sess:
-            # pylint: disable=g-complex-comprehension
-            self.agent = dqn.DQN(sess, player_id, info_state_size, num_actions, hidden_layers_sizes, **kwargs)
-
+        # # Reload policy
+        # fcpa_game_string = pyspiel.hunl_game_string("fcpa")
+        # game = pyspiel.load_game(fcpa_game_string)
+        # num_players = 2
+        # env_configs = {"players": num_players}
+        # env = rl_environment.Environment(game, **env_configs)
+        # info_state_size = env.observation_spec()["info_state"][0]
+        # num_actions = env.action_spec()["num_actions"]
+        #
+        # hidden_layers_sizes = [int(l) for l in [128, ]]
+        # kwargs = {
+        #     "replay_buffer_capacity": int(5e3),
+        #     "epsilon_decay_duration": int(3e2),
+        #     "epsilon_start": 0.06,
+        #     "epsilon_end": 0.001,
+        # }
+        #
+        # with tf.Session() as sess:
+        #     agents = [
+        #         nfsp.NFSP(sess, idx, info_state_size, num_actions, hidden_layers_sizes,
+        #                   reservoir_buffer_capacity=int(5e3), anticipatory_param=0.1,
+        #                   **kwargs) for idx in range(num_players)
+        #     ]
+        #
+        #     sess.run(tf.global_variables_initializer())
+        #
+        #     for agent in agents:
+        #         print(agent.has_checkpoint("/tmp/fcpa_checkpoints"))
+        #         agent.restore("/tmp/fcpa_checkpoints")
+        #     learned_policy = NFSPPolicies(env, agents, nfsp.MODE.average_policy)
         self.policy = None
         self.player_id = player_id
         self.state = None
@@ -120,7 +134,7 @@ class Agent(pyspiel.Bot):
 
         :param state: The initial state of the game.
         """
-        self.env.set_state(state)
+        self.state = state
 
     def inform_action(self, state, player_id, action):
         """Let the bot know of the other agent's actions.
@@ -129,7 +143,7 @@ class Agent(pyspiel.Bot):
         :param player_id: The ID of the player that executed an action.
         :param action: The action which the player executed.
         """
-        self.env.set_state(state)
+        self.state = state
         self.previousAction[player_id] = action
 
     def step(self, state):
@@ -150,13 +164,12 @@ def test_api_calls():
     """This method calls a number of API calls that are required for the
     tournament. It should not trigger any Exceptions.
     """
-
+    learned_policy = train()
     fcpa_game_string = pyspiel.hunl_game_string("fcpa")
     game = pyspiel.load_game(fcpa_game_string)
     bots = [get_agent_for_tournament(player_id) for player_id in [0, 1]]
-    policy = train()
     for bot in bots:
-        bot.policy = policy
+        bot.policy = learned_policy
     returns = evaluate_bots.evaluate_bots(game.new_initial_state(), bots, np.random)
     assert len(returns) == 2
     assert isinstance(returns[0], float)
@@ -164,14 +177,15 @@ def test_api_calls():
     print("SUCCESS!")
 
 
-class DQNPolicies(policy.Policy):
+class NFSPPolicies(policy.Policy):
     """Joint policy to be evaluated."""
 
-    def __init__(self, env, dqn_policies):
+    def __init__(self, env, nfsp_policies, mode):
         game = env.game
         player_ids = [0, 1]
-        super(DQNPolicies, self).__init__(game, player_ids)
-        self._policies = dqn_policies
+        super(NFSPPolicies, self).__init__(game, player_ids)
+        self._policies = nfsp_policies
+        self._mode = mode
         self._obs = {"info_state": [None, None], "legal_actions": [None, None]}
 
     def action_probabilities(self, state, player_id=None):
@@ -188,12 +202,10 @@ class DQNPolicies(policy.Policy):
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
             self._policies[cur_player]._session = sess
-            p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
+            with self._policies[cur_player].temp_mode_as(self._mode):
+                p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
             prob_dict = {action: p[action] for action in legal_actions}
-            return prob_dict
-
-
-
+        return prob_dict
 
 
 FLAGS = flags.FLAGS
@@ -210,9 +222,10 @@ def LoadAgent(agent_type, game, player_id, rng):
   if agent_type == "random":
     return uniform_random.UniformRandomBot(player_id, rng)
   elif agent_type == "agent":
-    agent = get_agent_for_tournament(player_id)
-    agent.policy = train()
-    return agent
+    learned_policy = train()
+    bot = get_agent_for_tournament(player_id)
+    bot.policy = learned_policy
+    return bot
   elif agent_type == "check_call":
     policy = pyspiel.PreferredActionPolicy([1, 0])
     return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
@@ -286,8 +299,9 @@ def test_against_bots(_):
 
 
 def main(argv=None):
-    # test_api_calls()
+    test_api_calls()
     app.run(test_against_bots)
+
 
 if __name__ == "__main__":
     sys.exit(main())
