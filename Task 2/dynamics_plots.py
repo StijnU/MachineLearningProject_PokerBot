@@ -72,7 +72,7 @@ def plot_kappas(game, temperature, kappas):
         axs[i].quiver(lenient)
     plt.tight_layout()
     plt.savefig('plot_kappas.png')
-    plt.show()
+    plt.show()  
 
 
 def main(_):

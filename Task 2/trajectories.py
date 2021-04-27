@@ -17,7 +17,6 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("num_episodes", int(5e4), "Number of train episodes.")
 
-
 def plot_trajectory(game, traj, temp):
     payoff_matrix = utils.game_payoffs_array(game)
     boltzmannq = dynamics.MultiPopulationDynamics(payoff_matrix, lambda state, fitness: dynamics.boltzmannq(state, fitness, temp))
@@ -26,11 +25,9 @@ def plot_trajectory(game, traj, temp):
     ax.quiver(boltzmannq)
     traj = time_average(traj)
     print(traj)
-    plt.plot(traj[:, 0], traj[:, 1])
+    ax.plot(traj[:, 0], traj[:, 1])
     plt.savefig('traj.png')
     plt.show()
-
-
 def main(_):
     game = pyspiel.load_game("matrix_mp")
     # game = pyspiel.create_matrix_game("stag_hunt", "Stag Hunt Game",

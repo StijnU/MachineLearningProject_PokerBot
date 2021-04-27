@@ -1,4 +1,18 @@
-"""DQN agents trained on Kuhn Poker."""
+# Copyright 2019 DeepMind Technologies Ltd. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""NFSP agents trained on Kuhn Poker."""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -12,29 +26,18 @@ import tensorflow.compat.v1 as tf
 from open_spiel.python import policy
 from open_spiel.python import rl_environment
 from open_spiel.python.algorithms import exploitability
-from open_spiel.python.algorithms import dqn
-import matplotlib.pyplot as plt
+from open_spiel.python.algorithms import nfsp
 
-FLAGS = flags.FLAGS
 
-flags.DEFINE_integer("num_train_episodes", int(3e5),
-                     "Number of training episodes.")
-flags.DEFINE_integer("eval_every", 10000,
-                     "Episode frequency at which the agents are evaluated.")
-flags.DEFINE_list("hidden_layers_sizes", [
-  128,
-], "Number of hidden units in the avg-net and Q-net.")
-flags.DEFINE_integer("replay_buffer_capacity", int(2e5),
-                     "Size of the replay buffer.")
-
-class DQNPolicies(policy.Policy):
+class NFSPPolicies(policy.Policy):
     """Joint policy to be evaluated."""
 
-    def __init__(self, env, dqn_policies):
+    def __init__(self, env, nfsp_policies, mode):
         game = env.game
         player_ids = [0, 1]
-        super(DQNPolicies, self).__init__(game, player_ids)
-        self._policies = dqn_policies
+        super(NFSPPolicies, self).__init__(game, player_ids)
+        self._policies = nfsp_policies
+        self._mode = mode
         self._obs = {"info_state": [None, None], "legal_actions": [None, None]}
 
     def action_probabilities(self, state, player_id=None):
@@ -48,21 +51,15 @@ class DQNPolicies(policy.Policy):
 
         info_state = rl_environment.TimeStep(
             observations=self._obs, rewards=None, discounts=None, step_type=None)
-        p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
+
+        with self._policies[cur_player].temp_mode_as(self._mode):
+            p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
         prob_dict = {action: p[action] for action in legal_actions}
         return prob_dict
 
 
-def main(unused_argv):
-
-    hidden_layers_sizes = [128]
-    num_train_episodes = int(1e5)
-    replay_buffer_capacity = int(2e5)
-    eval_every = 10000
-
-    game = "kuhn_poker"
-    num_players = 2
-
+def train_nfsp(game, num_players=2, num_train_episodes=1000, eval_every=10000, hidden_layers_sizes=[128],
+               replay_buffer_capacity=int(2e5), reservoir_buffer_capacity=int(2e6), anticipatory_param=0.1):
     env_configs = {"players": num_players}
     env = rl_environment.Environment(game, **env_configs)
     info_state_size = env.observation_spec()["info_state"][0]
@@ -75,32 +72,23 @@ def main(unused_argv):
         "epsilon_start": 0.06,
         "epsilon_end": 0.001,
     }
-
     with tf.Session() as sess:
         # pylint: disable=g-complex-comprehension
         agents = [
-            dqn.DQN(sess, idx, info_state_size, num_actions, hidden_layers_sizes, **kwargs) for idx in
-            range(num_players)
+            nfsp.NFSP(sess, idx, info_state_size, num_actions, hidden_layers_sizes,
+                      reservoir_buffer_capacity, anticipatory_param,
+                      **kwargs) for idx in range(num_players)
         ]
-        evalEpisodes = []
-        expl_list = []
-        nashConv_list = []
-        expl_policies_avg = DQNPolicies(env, agents)
+        avg_policy = NFSPPolicies(env, agents, nfsp.MODE.average_policy)
 
         sess.run(tf.global_variables_initializer())
+        expl = []
+        conv = []
         for ep in range(num_train_episodes):
-            if (ep + 1) % eval_every == 0:
-                print("dawelni")
-                losses = [agent.loss for agent in agents]
-                logging.info("Losses: %s", losses)
-                expl = exploitability.exploitability(env.game, expl_policies_avg)
-                nashConv = exploitability.nash_conv(env.game, expl_policies_avg)
-                evalEpisodes.append(ep)
-                expl_list.append(expl)
-                nashConv_list.append(nashConv)
-                logging.info("[%s] Exploitability AVG %s", ep + 1, expl)
-                logging.info("[%s] Exploitability AVG %s", ep + 1, nashConv)
-                logging.info("_____________________________________________")
+            current_expl = exploitability.exploitability(env.game, avg_policy)
+            current_conv = exploitability.nash_conv(env.game, avg_policy)
+            expl.append(current_expl)
+            conv.append(current_conv)
 
             time_step = env.reset()
             while not time_step.last():
@@ -113,8 +101,10 @@ def main(unused_argv):
             for agent in agents:
                 agent.step(time_step)
 
-        return expl_list, nashConv_list, evalEpisodes
+    return expl, conv, num_train_episodes
 
 
-if __name__ == "__main__":
-    expl, nash = app.run(main)
+def main(unused):
+    game = "kuhn_poker"
+    expl, conv, num_episodes = train_nfsp(game=game)
+    return expl, conv, num_episodes

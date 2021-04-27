@@ -43,32 +43,7 @@ def main(_):
         expl_data.append(current_expl)
         conv_data.append(current_conv)
 
-        if i % (iterations/10) == 0:
-            print("Exploitability at iteration {}: {}".format(i, current_expl))
-            print("NashConv at iteration {}: {}".format(i, current_conv))
-
-
-    average_policy = cfr_solver.average_policy()
-    print([average_policy]*2)
-    average_policy_values = expected_game_score.policy_value(
-        game.new_initial_state(), [average_policy] * 2)
-    expl = exploitability.exploitability(game, cfr_solver.current_policy())
-
-    print("Computed player 0 value: {}".format(average_policy_values[0]))
-    print("Expected player 0 value: {}".format(-1 / 18))
-
-    print("Computed player 1 value: {}".format(average_policy_values[1]))
-    print("Expected player 1 value: {}".format(1 / 18))
-
-    print("Exploitability: {}".format(expl))
-
-    plt.figure("Exploitability")
-    labels = ["Exploitability", "NashConv"]
-    plt.plot(range(iterations), expl_data)
-    plt.plot(range(iterations), conv_data)
-    plt.legend(labels)
-    plt.show()
-
+    return expl_data, conv_data, range(iterations)
 
 if __name__ == "__main__":
     app.run(main)
