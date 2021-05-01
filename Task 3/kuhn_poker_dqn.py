@@ -56,7 +56,7 @@ class DQNPolicies(policy.Policy):
 def main(unused_argv):
 
     hidden_layers_sizes = [128]
-    num_train_episodes = int(1e5)
+    num_train_episodes = int(5e5)
     replay_buffer_capacity = int(2e5)
     eval_every = 10000
 
@@ -90,7 +90,6 @@ def main(unused_argv):
         sess.run(tf.global_variables_initializer())
         for ep in range(num_train_episodes):
             if (ep + 1) % eval_every == 0:
-                print("dawelni")
                 losses = [agent.loss for agent in agents]
                 logging.info("Losses: %s", losses)
                 expl = exploitability.exploitability(env.game, expl_policies_avg)

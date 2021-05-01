@@ -58,7 +58,7 @@ class NFSPPolicies(policy.Policy):
         return prob_dict
 
 
-def train_nfsp(game, num_players=2, num_train_episodes=1000, eval_every=10000, hidden_layers_sizes=[128],
+def train_nfsp(game, num_players=2, num_train_episodes=100000, eval_every=10000, hidden_layers_sizes=[128],
                replay_buffer_capacity=int(2e5), reservoir_buffer_capacity=int(2e6), anticipatory_param=0.1):
     env_configs = {"players": num_players}
     env = rl_environment.Environment(game, **env_configs)
@@ -89,6 +89,9 @@ def train_nfsp(game, num_players=2, num_train_episodes=1000, eval_every=10000, h
             current_conv = exploitability.nash_conv(env.game, avg_policy)
             expl.append(current_expl)
             conv.append(current_conv)
+
+            if ep%eval_every == 0:
+                print(ep)
 
             time_step = env.reset()
             while not time_step.last():
