@@ -17,8 +17,9 @@ import argparse
 import logging
 import numpy as np
 import pyspiel
+import train_fcpa
 from open_spiel.python import rl_environment, policy
-from open_spiel.python.algorithms import evaluate_bots, deep_cfr
+from open_spiel.python.algorithms import evaluate_bots, deep_cfr_tf2
 import tensorflow.compat.v1 as tf
 from absl import app
 from absl import flags
@@ -39,34 +40,6 @@ def get_agent_for_tournament(player_id):
     return my_player
 
 
-def train():
-    """Trains the model and save the trained policy"""
-    num_iterations = 100
-    num_traversals = 5
-
-    fcpa_game_string = pyspiel.hunl_game_string("fcpa")
-    game = pyspiel.load_game(fcpa_game_string)
-
-    with tf.Session() as sess:
-        deep_cfr_solver = deep_cfr.DeepCFRSolver(
-            sess,
-            game,
-            policy_network_layers=(1024, 256),
-            advantage_network_layers=(1024, 256),
-            num_iterations=num_iterations,
-            num_traversals=num_traversals,
-            learning_rate=1e-3,
-            batch_size_advantage=128,
-            batch_size_strategy=1024,
-            memory_capacity=int(1e7),
-            policy_network_train_steps=400,
-            advantage_network_train_steps=20,
-            reinitialize_advantage_networks=False)
-        sess.run(tf.global_variables_initializer())
-        deep_cfr_solver.solve()
-    return deep_cfr_solver
-
-
 class Agent(pyspiel.Bot):
     """Agent template"""
 
@@ -78,18 +51,14 @@ class Agent(pyspiel.Bot):
         a few seconds.
         """
         pyspiel.Bot.__init__(self)
-
-        self.solver = None
-        self.player_id = player_id
-        self.state = None
-        self.previousAction = [None, None]
+        self.policy = tf.keras.models.load_model("./fcpa_policy", compile=False)
 
     def restart_at(self, state):
         """Starting a new game in the given state.
 
         :param state: The initial state of the game.
         """
-        self.state = state
+        pass
 
     def inform_action(self, state, player_id, action):
         """Let the bot know of the other agent's actions.
@@ -98,8 +67,7 @@ class Agent(pyspiel.Bot):
         :param player_id: The ID of the player that executed an action.
         :param action: The action which the player executed.
         """
-        self.state = state
-        self.previousAction[player_id] = action
+        pass
 
     def step(self, state):
         """Returns the selected action in the given state.
@@ -108,29 +76,45 @@ class Agent(pyspiel.Bot):
         :returns: The selected action from the legal actions, or
             `pyspiel.INVALID_ACTION` if there are no legal actions available.
         """
-        with tf.Session() as sess:
-            self.solver._session = sess
-            sess.run(tf.global_variables_initializer())
+        cur_player = state.current_player()
+        legal_actions = state.legal_actions(cur_player)
+        legal_actions_mask = tf.constant(
+            state.legal_actions_mask(cur_player), dtype=tf.float32)
+        info_state_vector = tf.constant(
+            state.information_state_tensor(), dtype=tf.float32)
+        if len(info_state_vector.shape) == 1:
+            info_state_vector = tf.expand_dims(info_state_vector, axis=0)
 
-            action_prob = self.solver.action_probabilities(state)
-            actions = list(action_prob.keys())
-            probs = list(action_prob.values())
-            sum_probs = sum(probs)
-            probs += (1 - sum_probs)/len(probs)
-            action = np.random.choice(actions, p=probs)
-            return action
+        x, mask = (info_state_vector, legal_actions_mask)
+        for layer in self.policy.hidden:
+            x = layer(x)
+            x = self.policy.activation(x)
+
+        x = self.policy.normalization(x)
+        x = self.policy.lastlayer(x)
+        x = self.policy.activation(x)
+        x = self.policy.out_layer(x)
+        # x = tf.where(mask == 1, x, -10e20)
+        x = self.policy.softmax(x)
+        x = tf.make_ndarray(tf.make_tensor_proto(x))
+        action_prob = {action: x[0][action] for action in legal_actions}
+        actions = list(action_prob.keys())
+        probs = list(action_prob.values())
+        if not (0 in legal_actions):
+            action_prob[1] += x[0][0]
+        probs = [float(i) / sum(probs) for i in probs]
+        action = np.random.choice(actions, p=probs)
+        # action = actions[np.argmax(probs)]
+        return action
 
 
 def test_api_calls():
     """This method calls a number of API calls that are required for the
     tournament. It should not trigger any Exceptions.
     """
-    solver = train()
     fcpa_game_string = pyspiel.hunl_game_string("fcpa")
     game = pyspiel.load_game(fcpa_game_string)
     bots = [get_agent_for_tournament(player_id) for player_id in [0, 1]]
-    for bot in bots:
-        bot.solver = solver
     returns = evaluate_bots.evaluate_bots(game.new_initial_state(), bots, np.random)
     assert len(returns) == 2
     assert isinstance(returns[0], float)
@@ -152,10 +136,7 @@ def LoadAgent(agent_type, game, player_id, rng):
     if agent_type == "random":
         return uniform_random.UniformRandomBot(player_id, rng)
     elif agent_type == "agent":
-        solver = train()
-        bot = get_agent_for_tournament(player_id)
-        bot.solver = solver
-        return bot
+        return get_agent_for_tournament(player_id)
     elif agent_type == "check_call":
         policy = pyspiel.PreferredActionPolicy([1, 0])
         return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
@@ -185,7 +166,7 @@ def test_against_bots(_):
         LoadAgent(FLAGS.player0, game, 0, rng),
         LoadAgent(FLAGS.player1, game, 1, rng)
     ]
-    num_rounds = 10
+    num_rounds = 500
     utilities = [0, 0]
     # Play multiple rounds and take the average result
     for _ in range(2*num_rounds):
@@ -228,7 +209,7 @@ def test_against_bots(_):
         # Game is now done. Print utilities for each player
         returns = state.returns()
         for pid in range(game.num_players()):
-            print("Utility for player {} is {}".format(pid, returns[pid]))
+            print("Utility for player {} ({})is {}".format(pid, type(agents[pid]), returns[pid]))
             utilities[pid] += returns[pid]
         utilities.reverse()
         agents.reverse()
@@ -238,9 +219,10 @@ def test_against_bots(_):
 
 
 def main(argv=None):
+    # train_fcpa.train()
     # test_api_calls()
     app.run(test_against_bots)
 
 
 if __name__ == "__main__":
-    app.run(main)
+    sys.exit(main())
