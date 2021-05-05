@@ -18,6 +18,7 @@ import logging
 import numpy as np
 import pyspiel
 import train_fcpa
+import fold_call_bot
 from open_spiel.python import rl_environment, policy
 from open_spiel.python.algorithms import evaluate_bots, deep_cfr_tf2
 import tensorflow.compat.v1 as tf
@@ -97,11 +98,16 @@ class Agent(pyspiel.Bot):
         # x = tf.where(mask == 1, x, -10e20)
         x = self.policy.softmax(x)
         x = tf.make_ndarray(tf.make_tensor_proto(x))
+        if 3 in legal_actions and x[0][3] < 0.9:
+            legal_actions = legal_actions[:-1]
+            if 2 in legal_actions and x[0][3] < 0.5:
+                legal_actions = legal_actions[:-1]
         action_prob = {action: x[0][action] for action in legal_actions}
         actions = list(action_prob.keys())
         probs = list(action_prob.values())
         if not (0 in legal_actions):
             action_prob[1] += x[0][0]
+        probs = [prob ** 2 for prob in probs]
         probs = [float(i) / sum(probs) for i in probs]
         action = np.random.choice(actions, p=probs)
         # action = actions[np.argmax(probs)]
@@ -122,33 +128,29 @@ def test_api_calls():
     print("SUCCESS!")
 
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_integer("seed", 12761381, "The seed to use for the RNG.")
-
-# Supported types of players: "random", "agent", "check_call", "fold"
-flags.DEFINE_string("player0", "agent", "Type of the agent for player 0.")
-flags.DEFINE_string("player1", "check_call", "Type of the agent for player 1.")
-
-
 def LoadAgent(agent_type, game, player_id, rng):
     """Return a bot based on the agent type."""
+    seed = 12761381
     if agent_type == "random":
         return uniform_random.UniformRandomBot(player_id, rng)
     elif agent_type == "agent":
         return get_agent_for_tournament(player_id)
     elif agent_type == "check_call":
         policy = pyspiel.PreferredActionPolicy([1, 0])
-        return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
+        return pyspiel.make_policy_bot(game, player_id, seed, policy)
     elif agent_type == "fold":
         policy = pyspiel.PreferredActionPolicy([0, 1])
-        return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
+        return pyspiel.make_policy_bot(game, player_id, seed, policy)
+    elif agent_type == "50/50":
+        # policy = pyspiel.PreferredActionPolicy([(0, 1), 2, 3])
+        return fold_call_bot.FoldCallBot(player_id, rng)
     else:
         raise RuntimeError("Unrecognized agent type: {}".format(agent_type))
 
 
-def test_against_bots(_):
-    rng = np.random.RandomState(FLAGS.seed)
+# Options for bot: "random", "agent", "check_call", "fold", "50/50"
+def test_against_bots(bot):
+    rng = np.random.RandomState()
 
     # Make sure poker is compiled into the library, as it requires an optional
     # dependency: the ACPC poker code. To ensure it is compiled in, prepend both
@@ -162,11 +164,15 @@ def test_against_bots(_):
     print("Creating game: {}".format(fcpa_game_string))
     game = pyspiel.load_game(fcpa_game_string)
 
-    agents = [
-        LoadAgent(FLAGS.player0, game, 0, rng),
-        LoadAgent(FLAGS.player1, game, 1, rng)
-    ]
-    num_rounds = 500
+    agents = [{
+        0: LoadAgent("agent", game, 0, rng),
+        1: LoadAgent(bot, game, 1, rng)
+    },
+        {
+        0: LoadAgent(bot, game, 0, rng),
+        1: LoadAgent("agent", game, 1, rng)
+    }]
+    num_rounds = 50000
     utilities = [0, 0]
     # Play multiple rounds and take the average result
     for _ in range(2*num_rounds):
@@ -196,8 +202,8 @@ def test_against_bots(_):
                 # for action in legal_actions:
                 #     print("Legal action: {} ({})".format(
                 #         state.action_to_string(current_player, action), action))
-                action = agents[current_player].step(state)
-                action_string = state.action_to_string(current_player, action)
+                action = agents[0][current_player].step(state)
+                # action_string = state.action_to_string(current_player, action)
                 # print("Player ", current_player, ", chose action: ",
                 #       action_string)
                 state.apply_action(action)
@@ -209,19 +215,26 @@ def test_against_bots(_):
         # Game is now done. Print utilities for each player
         returns = state.returns()
         for pid in range(game.num_players()):
-            print("Utility for player {} ({})is {}".format(pid, type(agents[pid]), returns[pid]))
+            # print("Utility for player {} ({})is {}".format(pid, type(agents[order[pid]]), returns[pid]))
             utilities[pid] += returns[pid]
-        utilities.reverse()
         agents.reverse()
+        utilities.reverse()
+
     print("---------------------------")
-    print("Average utility for player {} ({}) is {}".format(0, FLAGS.player0, utilities[0]/2/num_rounds))
-    print("Average utility for player {} ({}) is {}".format(1, FLAGS.player1, utilities[1]/2/num_rounds))
+    print("Average utility for player {} ({}) is {}".format(0, "agent", utilities[0]/2/num_rounds))
+    print("Total utility after {} rounds for player {} ({}) is {}".format(num_rounds*2, 0, "agent", utilities[0]))
+    print("Average utility for player {} ({}) is {}".format(1, bot, utilities[1]/2/num_rounds))
+    print("Total utility after {} rounds for player {} ({}) is {}".format(num_rounds*2, 1, bot, utilities[1]))
+    print("---------------------------")
 
 
 def main(argv=None):
     # train_fcpa.train()
     # test_api_calls()
-    app.run(test_against_bots)
+    test_against_bots("random")
+    # test_against_bots("check_call")
+    # test_against_bots("fold")
+    # test_against_bots("50/50")
 
 
 if __name__ == "__main__":
