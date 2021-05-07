@@ -58,7 +58,7 @@ class NFSPPolicies(policy.Policy):
         return prob_dict
 
 
-def train_nfsp(game, num_players=2, num_train_episodes=100000, eval_every=10000, hidden_layers_sizes=[128],
+def train_nfsp(game, num_players=2, num_train_episodes=100000, eval_every=100, hidden_layers_sizes=[128],
                replay_buffer_capacity=int(2e5), reservoir_buffer_capacity=int(2e6), anticipatory_param=0.1):
     env_configs = {"players": num_players}
     env = rl_environment.Environment(game, **env_configs)
