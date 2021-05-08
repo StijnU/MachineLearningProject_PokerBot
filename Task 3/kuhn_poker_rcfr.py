@@ -109,10 +109,13 @@ def train(_):
     for i in range(num_iterations):
 
         solver.evaluate_and_update_policy(_train_fn)
+        pyspiel.Bot
         expl = pyspiel.exploitability(game, solver.average_policy())
         conv = pyspiel.nash_conv(game, solver.average_policy())
         expl_vals.append(expl)
         conv_vals.append(conv)
+        if i%1000 == 0:
+            print(i)
     return expl_vals, conv_vals, num_iterations
 
 
