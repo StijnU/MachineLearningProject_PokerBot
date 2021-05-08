@@ -3,7 +3,7 @@
 """
 fcpa_agent.py
 
-Extend this class to provide an agent that can participate in a tournament.
+Provides an agent that can participate in a tournament.
 
 Created by Pieter Robberechts, Wannes Meert.
 Copyright (c) 2021 KU Leuven. All rights reserved.
@@ -12,25 +12,22 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import sys
-import argparse
+import fold_call_bot
 import logging
 import numpy as np
 import pyspiel
-import train_fcpa
-import fold_call_bot
-from open_spiel.python import rl_environment, policy
-from open_spiel.python.algorithms import evaluate_bots, deep_cfr_tf2
+import sys
 import tensorflow.compat.v1 as tf
-from absl import app
-from absl import flags
+import train_fcpa
+
+from open_spiel.python.algorithms import evaluate_bots
 from open_spiel.python.bots import uniform_random
 
 logger = logging.getLogger('be.kuleuven.cs.dtai.fcpa')
 
 
 def get_agent_for_tournament(player_id):
-    """Change this function to initialize your agent.
+    """
     This function is called by the tournament code at the beginning of the
     tournament.
 
@@ -45,12 +42,7 @@ class Agent(pyspiel.Bot):
     """Agent template"""
 
     def __init__(self, player_id):
-        """Initialize an agent to play FCPA poker.
-
-        Note: This agent should make use of a pre-trained policy to enter
-        the tournament. Initializing the agent should thus take no more than
-        a few seconds.
-        """
+        """Initialize an agent to play FCPA poker"""
         pyspiel.Bot.__init__(self)
         self.policy = tf.keras.models.load_model("./fcpa_policy", compile=False)
 
@@ -79,14 +71,12 @@ class Agent(pyspiel.Bot):
         """
         cur_player = state.current_player()
         legal_actions = state.legal_actions(cur_player)
-        legal_actions_mask = tf.constant(
-            state.legal_actions_mask(cur_player), dtype=tf.float32)
         info_state_vector = tf.constant(
             state.information_state_tensor(), dtype=tf.float32)
         if len(info_state_vector.shape) == 1:
             info_state_vector = tf.expand_dims(info_state_vector, axis=0)
 
-        x, mask = (info_state_vector, legal_actions_mask)
+        x = info_state_vector
         for layer in self.policy.hidden:
             x = layer(x)
             x = self.policy.activation(x)
@@ -95,22 +85,28 @@ class Agent(pyspiel.Bot):
         x = self.policy.lastlayer(x)
         x = self.policy.activation(x)
         x = self.policy.out_layer(x)
-        # x = tf.where(mask == 1, x, -10e20)
         x = self.policy.softmax(x)
         x = tf.make_ndarray(tf.make_tensor_proto(x))
+        # Only allow player to go all-in if the probability is at least 90%
         if 3 in legal_actions and x[0][3] < 0.9:
             legal_actions = legal_actions[:-1]
+            # If player can't go all-in, only allow the player to bet if the probability is at least 50%
             if 2 in legal_actions and x[0][3] < 0.5:
                 legal_actions = legal_actions[:-1]
+                x[0][1] += x[0][2] + x[0][3]
+            else:
+                x[0][2] += x[0][3]
         action_prob = {action: x[0][action] for action in legal_actions}
         actions = list(action_prob.keys())
         probs = list(action_prob.values())
+        # If fold is not an option, add that probability to the call/check action
         if not (0 in legal_actions):
             action_prob[1] += x[0][0]
+        # Square and normalize probabilities to make most probable action even more probable
         probs = [prob ** 2 for prob in probs]
         probs = [float(i) / sum(probs) for i in probs]
+        # Choose a random action based on their probabilities
         action = np.random.choice(actions, p=probs)
-        # action = actions[np.argmax(probs)]
         return action
 
 
@@ -142,7 +138,6 @@ def LoadAgent(agent_type, game, player_id, rng):
         policy = pyspiel.PreferredActionPolicy([0, 1])
         return pyspiel.make_policy_bot(game, player_id, seed, policy)
     elif agent_type == "50/50":
-        # policy = pyspiel.PreferredActionPolicy([(0, 1), 2, 3])
         return fold_call_bot.FoldCallBot(player_id, rng)
     else:
         raise RuntimeError("Unrecognized agent type: {}".format(agent_type))
@@ -174,14 +169,10 @@ def test_against_bots(bot):
     }]
     num_rounds = 50000
     utilities = [0, 0]
+    wins = [0, 0]
     # Play multiple rounds and take the average result
     for _ in range(2*num_rounds):
         state = game.new_initial_state()
-
-        # # Print the initial state
-        # print("INITIAL STATE")
-        # print(str(state))
-
         while not state.is_terminal():
             # The state can be three different types: chance node,
             # simultaneous node, or decision node
@@ -189,52 +180,43 @@ def test_against_bots(bot):
             if state.is_chance_node():
                 # Chance node: sample an outcome
                 outcomes = state.chance_outcomes()
-                num_actions = len(outcomes)
-                # print("Chance node with " + str(num_actions) + " outcomes")
                 action_list, prob_list = zip(*outcomes)
                 action = rng.choice(action_list, p=prob_list)
-                # print("Sampled outcome: ",
-                #       state.action_to_string(state.current_player(), action))
                 state.apply_action(action)
             else:
                 # Decision node: sample action for the single current player
-                legal_actions = state.legal_actions()
-                # for action in legal_actions:
-                #     print("Legal action: {} ({})".format(
-                #         state.action_to_string(current_player, action), action))
                 action = agents[0][current_player].step(state)
-                # action_string = state.action_to_string(current_player, action)
-                # print("Player ", current_player, ", chose action: ",
-                #       action_string)
                 state.apply_action(action)
 
-            # print("")
-            # print("NEXT STATE:")
-            # print(str(state))
-
-        # Game is now done. Print utilities for each player
+        # Game is now done
         returns = state.returns()
         for pid in range(game.num_players()):
-            # print("Utility for player {} ({})is {}".format(pid, type(agents[order[pid]]), returns[pid]))
             utilities[pid] += returns[pid]
+            if returns[pid] > 0:
+                wins[pid] += 1
         agents.reverse()
         utilities.reverse()
+        wins.reverse()
+
+    win_rate = [w/2/num_rounds for w in wins]
 
     print("---------------------------")
     print("Average utility for player {} ({}) is {}".format(0, "agent", utilities[0]/2/num_rounds))
     print("Total utility after {} rounds for player {} ({}) is {}".format(num_rounds*2, 0, "agent", utilities[0]))
+    print("Win rate after {} rounds for player {} ({}) is {}".format(num_rounds * 2, 0, "agent", win_rate[0]))
     print("Average utility for player {} ({}) is {}".format(1, bot, utilities[1]/2/num_rounds))
     print("Total utility after {} rounds for player {} ({}) is {}".format(num_rounds*2, 1, bot, utilities[1]))
+    print("Win rate after {} rounds for player {} ({}) is {}".format(num_rounds*2, 1, bot, win_rate[1]))
     print("---------------------------")
 
 
 def main(argv=None):
-    # train_fcpa.train()
-    # test_api_calls()
+    train_fcpa.train()
+    test_api_calls()
     test_against_bots("random")
-    # test_against_bots("check_call")
-    # test_against_bots("fold")
-    # test_against_bots("50/50")
+    test_against_bots("fold")
+    test_against_bots("check_call")
+    test_against_bots("50/50")
 
 
 if __name__ == "__main__":

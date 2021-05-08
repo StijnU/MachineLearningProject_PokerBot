@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# encoding: utf-8
+"""
+train_fcpa.py
+
+Provides a function to train the fcpa_agent and stores the result at "./fcpa_policy"
+"""
+
 import sys
 
 import pyspiel
