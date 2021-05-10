@@ -52,7 +52,7 @@ def plot_q_values(q_values):
 
 
 def main(_):
-    game = pyspiel.load_game("matrix_rps")
+    game = pyspiel.load_game("matrix_mp")
     # game = pyspiel.create_matrix_game("stag_hunt", "Stag Hunt Game",
     #                                        ["Stag", "Hare"], ["Stag", "Hare"],
     #                                        [[4, 1], [3, 3]], 
@@ -77,8 +77,8 @@ def main(_):
     if num_actions == 2: 
         boltzmannq = dynamics.MultiPopulationDynamics(payoff_matrix, lambda state, fitness: dynamics.boltzmannq(state, fitness, temp))
         _, ax = plt.subplots(1, 1, subplot_kw=dict(projection="2x2"))
-        init_q_values_0 = [[-0.08, 0.08], [0, 0], [0.08, -0.08]]
-        init_q_values_1 = [[-0.08, 0.08], [0, 0], [0.08, -0.08]]
+        init_q_values_0 = [[-0.8, 0.8], [0, 0], [0.8, -0.8]]
+        init_q_values_1 = [[-0.8, 0.8], [0, 0], [0.8, -0.8]]
     else:
         boltzmannq = dynamics.SinglePopulationDynamics(payoff_matrix, lambda state, fitness: dynamics.boltzmannq(state, fitness, temp))
         _, ax = plt.subplots(1, 1, subplot_kw=dict(projection="3x3"))
@@ -143,10 +143,7 @@ def main(_):
             print(probabilities)
             
             # probabilities = time_average(probabilities)
-
             plot_trajectory(ax, game, probabilities)
-            # plot_q_values(q_values)
-
     plt.savefig('traj.png')
     plt.show()
     plot_q_values(q_values)
