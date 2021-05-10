@@ -43,6 +43,7 @@ def main(_):
         expl_data.append(current_expl)
         conv_data.append(current_conv)
 
+    print(cfr_solver.average_policy().action_probability_array)
     return expl_data, conv_data, range(iterations)
 
 if __name__ == "__main__":
