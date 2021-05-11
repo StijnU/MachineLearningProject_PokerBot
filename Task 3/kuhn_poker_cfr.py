@@ -24,27 +24,29 @@ from open_spiel.python.algorithms import cfr
 from open_spiel.python.algorithms import expected_game_score
 from open_spiel.python.algorithms import exploitability
 import pyspiel
+import time
 import matplotlib.pyplot as plt
 
 
-def main(_):
-    game = pyspiel.load_game("kuhn_poker")
-
+def train_cfr(game, num_iterations, eval_every):
+    game = pyspiel.load_game(game)
     cfr_solver = cfr.CFRSolver(game)
-    iterations = 1000
 
-    expl_data = []
-    conv_data = []
-
-    for i in range(iterations):
+    expl = []
+    conv = []
+    start_time = time.time()
+    for i in range(num_iterations + 1):
+        if i % eval_every == 0:
+            current_expl = exploitability.exploitability(game, cfr_solver.average_policy())
+            current_nash_conv = exploitability.nash_conv(game, cfr_solver.average_policy())
+            expl.append(current_expl)
+            conv.append(current_nash_conv)
+            print(80 * "-")
+            print("Training Episode: " + str(i))
+            print("Exploitability: " + str(expl[-1]))
+            print("Time elapsed: " + str(time.time() - start_time))
         cfr_solver.evaluate_and_update_policy()
-        current_expl = exploitability.exploitability(game, cfr_solver.average_policy())
-        current_conv = exploitability.nash_conv(game, cfr_solver.average_policy())
-        expl_data.append(current_expl)
-        conv_data.append(current_conv)
-
-    print(cfr_solver.average_policy().action_probability_array)
-    return expl_data, conv_data, range(iterations)
+    return expl, conv
 
 if __name__ == "__main__":
     app.run(main)

@@ -22,6 +22,7 @@ from absl import app
 from absl import flags
 from absl import logging
 import tensorflow.compat.v1 as tf
+import time
 
 from open_spiel.python import policy
 from open_spiel.python import rl_environment
@@ -84,14 +85,17 @@ def train_nfsp(game, num_players=2, num_train_episodes=100000, eval_every=100, h
         sess.run(tf.global_variables_initializer())
         expl = []
         conv = []
-        for ep in range(num_train_episodes):
-            current_expl = exploitability.exploitability(env.game, avg_policy)
-            current_conv = exploitability.nash_conv(env.game, avg_policy)
-            expl.append(current_expl)
-            conv.append(current_conv)
-
-            if ep%eval_every == 0:
-                print(ep)
+        start_time = time.time()
+        for ep in range(num_train_episodes + 1):
+            if ep % eval_every == 0:
+                current_expl = exploitability.exploitability(env.game, avg_policy)
+                current_conv = exploitability.nash_conv(env.game, avg_policy)
+                expl.append(current_expl)
+                conv.append(current_conv)
+                print(80 * "-")
+                print("Training Episode: " + str(ep))
+                print("Exploitability: " + str(expl[-1]))
+                print("Time elapsed: " + str(time.time() - start_time))
 
             time_step = env.reset()
             while not time_step.last():
@@ -104,7 +108,7 @@ def train_nfsp(game, num_players=2, num_train_episodes=100000, eval_every=100, h
             for agent in agents:
                 agent.step(time_step)
 
-    return expl, conv, num_train_episodes
+    return expl, conv
 
 
 def main(unused):
