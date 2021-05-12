@@ -3,7 +3,7 @@
 """
 fcpa_agent.py
 
-Extend this class to provide an agent that can participate in a tournament.
+Provides an agent that can participate in a tournament.
 
 Created by Pieter Robberechts, Wannes Meert.
 Copyright (c) 2021 KU Leuven. All rights reserved.
@@ -12,23 +12,22 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import sys
-import argparse
+import fold_call_bot
 import logging
 import numpy as np
 import pyspiel
-from open_spiel.python import rl_environment, policy
-from open_spiel.python.algorithms import evaluate_bots, rcfr, dqn
+import sys
 import tensorflow.compat.v1 as tf
-from absl import app
-from absl import flags
+import train_fcpa
+
+from open_spiel.python.algorithms import evaluate_bots
 from open_spiel.python.bots import uniform_random
 
 logger = logging.getLogger('be.kuleuven.cs.dtai.fcpa')
 
 
 def get_agent_for_tournament(player_id):
-    """Change this function to initialize your agent.
+    """
     This function is called by the tournament code at the beginning of the
     tournament.
 
@@ -39,88 +38,20 @@ def get_agent_for_tournament(player_id):
     return my_player
 
 
-def train():
-    """Trains the model and save the trained policy"""
-    fcpa_game_string = pyspiel.hunl_game_string("fcpa")
-    game = pyspiel.load_game(fcpa_game_string)
-    num_players = 2
-    env_configs = {"players": num_players}
-    env = rl_environment.Environment(game, **env_configs)
-    info_state_size = env.observation_spec()["info_state"][0]
-    num_actions = env.action_spec()["num_actions"]
-
-    hidden_layers_sizes = [int(l) for l in [128, ]]
-    kwargs = {
-        "replay_buffer_capacity": int(5e2),
-        "epsilon_decay_duration": int(3e4),
-        "epsilon_start": 0.06,
-        "epsilon_end": 0.001,
-    }
-
-    with tf.Session() as sess:
-        agents = [
-            dqn.DQN(sess, idx, info_state_size, num_actions, hidden_layers_sizes, **kwargs) for idx in
-            range(num_players)
-        ]
-        policy = DQNPolicies(env, agents)
-
-        sess.run(tf.global_variables_initializer())
-        for ep in range(int(3e4)):
-            time_step = env.reset()
-            while not time_step.last():
-                player_id = time_step.observations["current_player"]
-                agent_output = agents[player_id].step(time_step)
-                action_list = [agent_output.action]
-                time_step = env.step(action_list)
-
-            # Episode is over, step all agents with final info state.
-            for agent in agents:
-                agent.step(time_step)
-        return policy
-
-
 class Agent(pyspiel.Bot):
     """Agent template"""
 
     def __init__(self, player_id):
-        """Initialize an agent to play FCPA poker.
-
-        Note: This agent should make use of a pre-trained policy to enter
-        the tournament. Initializing the agent should thus take no more than
-        a few seconds.
-        """
+        """Initialize an agent to play FCPA poker"""
         pyspiel.Bot.__init__(self)
-
-        fcpa_game_string = pyspiel.hunl_game_string("fcpa")
-        game = pyspiel.load_game(fcpa_game_string)
-        num_players = 2
-        env_configs = {"players": num_players}
-        self.env = rl_environment.Environment(game, **env_configs)
-        info_state_size = self.env.observation_spec()["info_state"][0]
-        num_actions = self.env.action_spec()["num_actions"]
-
-        hidden_layers_sizes = [int(l) for l in [128, ]]
-        kwargs = {
-            "replay_buffer_capacity": int(2e2),
-            "epsilon_decay_duration": int(3e3),
-            "epsilon_start": 0.06,
-            "epsilon_end": 0.001,
-        }
-        with tf.Session() as sess:
-            # pylint: disable=g-complex-comprehension
-            self.agent = dqn.DQN(sess, player_id, info_state_size, num_actions, hidden_layers_sizes, **kwargs)
-
-        self.policy = None
-        self.player_id = player_id
-        self.state = None
-        self.previousAction = [None, None]
+        self.policy = tf.keras.models.load_model("./fcpa_policy", compile=False)
 
     def restart_at(self, state):
         """Starting a new game in the given state.
 
         :param state: The initial state of the game.
         """
-        self.env.set_state(state)
+        pass
 
     def inform_action(self, state, player_id, action):
         """Let the bot know of the other agent's actions.
@@ -129,8 +60,7 @@ class Agent(pyspiel.Bot):
         :param player_id: The ID of the player that executed an action.
         :param action: The action which the player executed.
         """
-        self.env.set_state(state)
-        self.previousAction[player_id] = action
+        pass
 
     def step(self, state):
         """Returns the selected action in the given state.
@@ -139,9 +69,43 @@ class Agent(pyspiel.Bot):
         :returns: The selected action from the legal actions, or
             `pyspiel.INVALID_ACTION` if there are no legal actions available.
         """
-        action_prob = self.policy.action_probabilities(state, self.player_id)
+        cur_player = state.current_player()
+        legal_actions = state.legal_actions(cur_player)
+        info_state_vector = tf.constant(
+            state.information_state_tensor(), dtype=tf.float32)
+        if len(info_state_vector.shape) == 1:
+            info_state_vector = tf.expand_dims(info_state_vector, axis=0)
+
+        x = info_state_vector
+        for layer in self.policy.hidden:
+            x = layer(x)
+            x = self.policy.activation(x)
+
+        x = self.policy.normalization(x)
+        x = self.policy.lastlayer(x)
+        x = self.policy.activation(x)
+        x = self.policy.out_layer(x)
+        x = self.policy.softmax(x)
+        x = tf.make_ndarray(tf.make_tensor_proto(x))
+        # Only allow player to go all-in if the probability is at least 90%
+        if 3 in legal_actions and x[0][3] < 0.9:
+            legal_actions = legal_actions[:-1]
+            # If player can't go all-in, only allow the player to bet if the probability is at least 50%
+            if 2 in legal_actions and x[0][3] < 0.5:
+                legal_actions = legal_actions[:-1]
+                x[0][1] += x[0][2] + x[0][3]
+            else:
+                x[0][2] += x[0][3]
+        action_prob = {action: x[0][action] for action in legal_actions}
         actions = list(action_prob.keys())
         probs = list(action_prob.values())
+        # If fold is not an option, add that probability to the call/check action
+        if not (0 in legal_actions):
+            action_prob[1] += x[0][0]
+        # Square and normalize probabilities to make most probable action even more probable
+        probs = [prob ** 2 for prob in probs]
+        probs = [float(i) / sum(probs) for i in probs]
+        # Choose a random action based on their probabilities
         action = np.random.choice(actions, p=probs)
         return action
 
@@ -150,13 +114,9 @@ def test_api_calls():
     """This method calls a number of API calls that are required for the
     tournament. It should not trigger any Exceptions.
     """
-
     fcpa_game_string = pyspiel.hunl_game_string("fcpa")
     game = pyspiel.load_game(fcpa_game_string)
     bots = [get_agent_for_tournament(player_id) for player_id in [0, 1]]
-    policy = train()
-    for bot in bots:
-        bot.policy = policy
     returns = evaluate_bots.evaluate_bots(game.new_initial_state(), bots, np.random)
     assert len(returns) == 2
     assert isinstance(returns[0], float)
@@ -164,130 +124,100 @@ def test_api_calls():
     print("SUCCESS!")
 
 
-class DQNPolicies(policy.Policy):
-    """Joint policy to be evaluated."""
-
-    def __init__(self, env, dqn_policies):
-        game = env.game
-        player_ids = [0, 1]
-        super(DQNPolicies, self).__init__(game, player_ids)
-        self._policies = dqn_policies
-        self._obs = {"info_state": [None, None], "legal_actions": [None, None]}
-
-    def action_probabilities(self, state, player_id=None):
-        cur_player = state.current_player()
-        legal_actions = state.legal_actions(cur_player)
-
-        self._obs["current_player"] = cur_player
-        self._obs["info_state"][cur_player] = (
-            state.information_state_tensor(cur_player))
-        self._obs["legal_actions"][cur_player] = legal_actions
-
-        info_state = rl_environment.TimeStep(
-            observations=self._obs, rewards=None, discounts=None, step_type=None)
-        with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer())
-            self._policies[cur_player]._session = sess
-            p = self._policies[cur_player].step(info_state, is_evaluation=True).probs
-            prob_dict = {action: p[action] for action in legal_actions}
-            return prob_dict
-
-
-
-
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_integer("seed", 12761381, "The seed to use for the RNG.")
-
-# Supported types of players: "random", "agent", "check_call", "fold"
-flags.DEFINE_string("player0", "agent", "Type of the agent for player 0.")
-flags.DEFINE_string("player1", "check_call", "Type of the agent for player 1.")
-
-
 def LoadAgent(agent_type, game, player_id, rng):
-  """Return a bot based on the agent type."""
-  if agent_type == "random":
-    return uniform_random.UniformRandomBot(player_id, rng)
-  elif agent_type == "agent":
-    agent = get_agent_for_tournament(player_id)
-    agent.policy = train()
-    return agent
-  elif agent_type == "check_call":
-    policy = pyspiel.PreferredActionPolicy([1, 0])
-    return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
-  elif agent_type == "fold":
-    policy = pyspiel.PreferredActionPolicy([0, 1])
-    return pyspiel.make_policy_bot(game, player_id, FLAGS.seed, policy)
-  else:
-    raise RuntimeError("Unrecognized agent type: {}".format(agent_type))
-
-
-def test_against_bots(_):
-  rng = np.random.RandomState(FLAGS.seed)
-
-  # Make sure poker is compiled into the library, as it requires an optional
-  # dependency: the ACPC poker code. To ensure it is compiled in, prepend both
-  # the install.sh and build commands with BUILD_WITH_ACPC=ON. See here:
-  # https://github.com/deepmind/open_spiel/blob/master/docs/install.md#configuration-conditional-dependencies
-  # for more details on optional dependencies.
-  games_list = pyspiel.registered_names()
-  assert "universal_poker" in games_list
-
-  fcpa_game_string = pyspiel.hunl_game_string("fcpa")
-  print("Creating game: {}".format(fcpa_game_string))
-  game = pyspiel.load_game(fcpa_game_string)
-
-  agents = [
-      LoadAgent(FLAGS.player0, game, 0, rng),
-      LoadAgent(FLAGS.player1, game, 1, rng)
-  ]
-
-  state = game.new_initial_state()
-
-  # Print the initial state
-  print("INITIAL STATE")
-  print(str(state))
-
-  while not state.is_terminal():
-    # The state can be three different types: chance node,
-    # simultaneous node, or decision node
-    current_player = state.current_player()
-    if state.is_chance_node():
-      # Chance node: sample an outcome
-      outcomes = state.chance_outcomes()
-      num_actions = len(outcomes)
-      print("Chance node with " + str(num_actions) + " outcomes")
-      action_list, prob_list = zip(*outcomes)
-      action = rng.choice(action_list, p=prob_list)
-      print("Sampled outcome: ",
-            state.action_to_string(state.current_player(), action))
-      state.apply_action(action)
+    """Return a bot based on the agent type."""
+    seed = 12761381
+    if agent_type == "random":
+        return uniform_random.UniformRandomBot(player_id, rng)
+    elif agent_type == "agent":
+        return get_agent_for_tournament(player_id)
+    elif agent_type == "check_call":
+        policy = pyspiel.PreferredActionPolicy([1, 0])
+        return pyspiel.make_policy_bot(game, player_id, seed, policy)
+    elif agent_type == "fold":
+        policy = pyspiel.PreferredActionPolicy([0, 1])
+        return pyspiel.make_policy_bot(game, player_id, seed, policy)
+    elif agent_type == "50/50":
+        return fold_call_bot.FoldCallBot(player_id, rng)
     else:
-      # Decision node: sample action for the single current player
-      legal_actions = state.legal_actions()
-      for action in legal_actions:
-        print("Legal action: {} ({})".format(
-            state.action_to_string(current_player, action), action))
-      action = agents[current_player].step(state)
-      action_string = state.action_to_string(current_player, action)
-      print("Player ", current_player, ", chose action: ",
-            action_string)
-      state.apply_action(action)
+        raise RuntimeError("Unrecognized agent type: {}".format(agent_type))
 
-    print("")
-    print("NEXT STATE:")
-    print(str(state))
 
-  # Game is now done. Print utilities for each player
-  returns = state.returns()
-  for pid in range(game.num_players()):
-    print("Utility for player {} is {}".format(pid, returns[pid]))
+# Options for bot: "random", "agent", "check_call", "fold", "50/50"
+def test_against_bots(bot):
+    rng = np.random.RandomState()
+
+    # Make sure poker is compiled into the library, as it requires an optional
+    # dependency: the ACPC poker code. To ensure it is compiled in, prepend both
+    # the install.sh and build commands with BUILD_WITH_ACPC=ON. See here:
+    # https://github.com/deepmind/open_spiel/blob/master/docs/install.md#configuration-conditional-dependencies
+    # for more details on optional dependencies.
+    games_list = pyspiel.registered_names()
+    assert "universal_poker" in games_list
+
+    fcpa_game_string = pyspiel.hunl_game_string("fcpa")
+    print("Creating game: {}".format(fcpa_game_string))
+    game = pyspiel.load_game(fcpa_game_string)
+
+    agents = [{
+        0: LoadAgent("agent", game, 0, rng),
+        1: LoadAgent(bot, game, 1, rng)
+    },
+        {
+        0: LoadAgent(bot, game, 0, rng),
+        1: LoadAgent("agent", game, 1, rng)
+    }]
+    num_rounds = 50000
+    utilities = [0, 0]
+    wins = [0, 0]
+    # Play multiple rounds and take the average result
+    for _ in range(2*num_rounds):
+        state = game.new_initial_state()
+        while not state.is_terminal():
+            # The state can be three different types: chance node,
+            # simultaneous node, or decision node
+            current_player = state.current_player()
+            if state.is_chance_node():
+                # Chance node: sample an outcome
+                outcomes = state.chance_outcomes()
+                action_list, prob_list = zip(*outcomes)
+                action = rng.choice(action_list, p=prob_list)
+                state.apply_action(action)
+            else:
+                # Decision node: sample action for the single current player
+                action = agents[0][current_player].step(state)
+                state.apply_action(action)
+
+        # Game is now done
+        returns = state.returns()
+        for pid in range(game.num_players()):
+            utilities[pid] += returns[pid]
+            if returns[pid] > 0:
+                wins[pid] += 1
+        agents.reverse()
+        utilities.reverse()
+        wins.reverse()
+
+    win_rate = [w/2/num_rounds for w in wins]
+
+    print("---------------------------")
+    print("Average utility for player {} ({}) is {}".format(0, "agent", utilities[0]/2/num_rounds))
+    print("Total utility after {} rounds for player {} ({}) is {}".format(num_rounds*2, 0, "agent", utilities[0]))
+    print("Win rate after {} rounds for player {} ({}) is {}".format(num_rounds * 2, 0, "agent", win_rate[0]))
+    print("Average utility for player {} ({}) is {}".format(1, bot, utilities[1]/2/num_rounds))
+    print("Total utility after {} rounds for player {} ({}) is {}".format(num_rounds*2, 1, bot, utilities[1]))
+    print("Win rate after {} rounds for player {} ({}) is {}".format(num_rounds*2, 1, bot, win_rate[1]))
+    print("---------------------------")
 
 
 def main(argv=None):
-    # test_api_calls()
-    app.run(test_against_bots)
+    # train_fcpa.train()
+    test_api_calls()
+    test_against_bots("random")
+    test_against_bots("fold")
+    test_against_bots("check_call")
+    test_against_bots("50/50")
+
 
 if __name__ == "__main__":
     sys.exit(main())
