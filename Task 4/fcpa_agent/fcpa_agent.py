@@ -211,7 +211,7 @@ def test_against_bots(bot):
 
 
 def main(argv=None):
-    train_fcpa.train()
+    # train_fcpa.train()
     test_api_calls()
     test_against_bots("random")
     test_against_bots("fold")
