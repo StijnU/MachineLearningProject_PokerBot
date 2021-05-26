@@ -1,8 +1,6 @@
 # MachineLearningProject
 Josse Huybrechts, Stijn Uytterhoeven, Daan Van Wesenbeeck
 
-## Tasks
-
 ### Task 1
 Different agents learning different matrix games on the basis of Q-learning methods.
 ### Task 2
