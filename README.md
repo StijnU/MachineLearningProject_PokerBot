@@ -7,7 +7,7 @@ Josse Huybrechts, Stijn Uytterhoeven, Daan Van Wesenbeeck
 Different agents learning different matrix games on the basis of Q-learning methods.
 ### Task 2
 Different agents learning Kuhn poker on the basis of different algorithms supplied by the open_spiel library.
-## Task 3
+### Task 3
 An agent capable to learn FCPA poker by using the Deep CFR algorithm.
 
 ## FCPA Experiments
